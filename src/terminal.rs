@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 pub trait Handler {
     fn update(&mut self, window: &mut Window);
     fn on_command_exit(&mut self, window: &mut Window);
+    fn on_terminal_exit(&mut self, window: &mut Window);
 }
 
 pub enum Command {
@@ -74,14 +75,9 @@ impl<H: Handler + Send + 'static> Runner<H> {
                     self.run(cmd)
                 }
                 Command::Exit => {
+                    self.handler.on_terminal_exit(&mut self.window);
+
                     println!("exiting listener for terminal");
-
-                    self.window
-                        .buffer
-                        .push_back(String::from(" <session closed> ").into_boxed_str());
-
-                    self.handler.update(&mut self.window);
-
                     break;
                 }
             }
