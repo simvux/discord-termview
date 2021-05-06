@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::process;
 
 pub type Packet = ((ChannelId, MessageId), session::Event);
-type TermID = u8;
+type TermID = String;
 
 const FRAME_BUFFERING: usize = 10;
 
@@ -23,21 +23,21 @@ pub struct Handler {
 
 pub struct Settings {
     allowed_roles: Vec<RoleId>,
-    seperator: u8,
+    prefix: u8,
 }
 
 impl Settings {
     pub fn new(allowed_roles: Vec<serenity::model::id::RoleId>, seperator: u8) -> Self {
         Self {
             allowed_roles,
-            seperator,
+            prefix: seperator,
         }
     }
 
     pub fn parse() -> Self {
         let seperator = std::env::var("SEPERATOR")
             .map(|s| s.as_bytes()[0])
-            .unwrap_or(b':');
+            .unwrap_or(b'$');
 
         let allowed_roles = std::env::var("ALLOWED_ROLES")
             .expect("missing semi-colon ALLOWED_ROLES variable containing channel ID's")
@@ -48,7 +48,7 @@ impl Settings {
 
         Settings {
             allowed_roles,
-            seperator,
+            prefix: seperator,
         }
     }
 }
@@ -63,7 +63,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Parser(err) => err.fmt(f),
-            Error::NoTerminal(term) => write!(f, "terminal `{}` not found", *term as char),
+            Error::NoTerminal(term) => write!(f, "terminal `{}` not found", term),
             Error::CannotRespond => f.write_str("cannot respond to message. Missing permissions?"),
         }
     }
@@ -143,7 +143,7 @@ impl Handler {
         term: TermID,
     ) -> Result<(), Error> {
         let tty = self.ttys.lock().await.get(&term).cloned();
-        tty.ok_or(Error::NoTerminal(term))?
+        tty.ok_or(Error::NoTerminal(term.clone()))?
             .send(terminal::Command::Exit)
             .ok();
 
@@ -170,7 +170,7 @@ impl Handler {
 
         let (runner, command_sender) = terminal::Runner::init(ttysession, height);
 
-        if let Some(_existing) = self.ttys.lock().await.insert(term, command_sender) {
+        if let Some(_existing) = self.ttys.lock().await.insert(term.clone(), command_sender) {
             eprintln!(
                 "WARNING: tty `{}` refused to die in time, this might create a zombie process",
                 term
@@ -183,7 +183,7 @@ impl Handler {
     }
 
     async fn apply_run(&self, term: TermID, cmd: String) -> Result<(), Error> {
-        println!("applying `{}` onto {}", cmd, term as char);
+        println!("applying `{}` onto {}", cmd, term);
 
         let sender = self
             .ttys
@@ -220,12 +220,19 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if msg.content.bytes().nth(1) == Some(self.settings.seperator)
+        if msg.content.as_bytes().first() == Some(&self.settings.prefix)
             && self.is_authorized(&ctx, &msg).await
         {
             println!("{}", &msg.content);
 
-            let tty_identifier = msg.content.as_bytes()[0];
+            let tty_identifier = {
+                let pos = msg.content.as_bytes()[1..]
+                    .iter()
+                    .position(|&b| b == b' ')
+                    .unwrap_or(msg.content.len() - 1);
+
+                msg.content[1..pos].to_string()
+            };
 
             if let Err(e) = self
                 .parse_and_apply_command(&ctx, &msg, tty_identifier, msg.content[2..].trim())
