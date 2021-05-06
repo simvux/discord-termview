@@ -118,12 +118,11 @@ impl Handler {
         height: usize,
         private: bool,
     ) -> Result<(), Error> {
-        let ttys = self.ttys.lock().await;
-        match ttys.get(&term) {
+        let tty = self.ttys.lock().await.get(&term).cloned();
+        match tty {
             Some(sender) => {
                 // send exit signal; then create new
                 sender.send(terminal::Command::Exit).unwrap();
-                drop(ttys);
 
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -131,7 +130,6 @@ impl Handler {
                     .await
             }
             None => {
-                drop(ttys);
                 self.spawn_new_terminal(ctx, msg, term, height, private)
                     .await
             }
@@ -144,12 +142,13 @@ impl Handler {
         _msg: &Message,
         term: TermID,
     ) -> Result<(), Error> {
-        let mut ttys = self.ttys.lock().await;
-        ttys.get(&term)
-            .ok_or(Error::NoTerminal(term))?
+        let tty = self.ttys.lock().await.get(&term).cloned();
+        tty.ok_or(Error::NoTerminal(term))?
             .send(terminal::Command::Exit)
             .ok();
-        ttys.remove(&term);
+
+        self.ttys.lock().await.remove(&term);
+
         Ok(())
     }
 
@@ -186,8 +185,13 @@ impl Handler {
     async fn apply_run(&self, term: TermID, cmd: String) -> Result<(), Error> {
         println!("applying `{}` onto {}", cmd, term as char);
 
-        let ttys = self.ttys.lock().await;
-        let sender = ttys.get(&term).ok_or(Error::NoTerminal(term))?;
+        let sender = self
+            .ttys
+            .lock()
+            .await
+            .get(&term)
+            .cloned()
+            .ok_or(Error::NoTerminal(term))?;
 
         let mut shell = process::Command::new("bash");
         shell.arg("-c").arg(&cmd);

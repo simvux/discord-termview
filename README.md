@@ -38,6 +38,7 @@ Edit `build.sh` with your token and role-id
  * allow killing terminals (difficult)
  * allow multi-line code blocks (easy)
  * help message (easy)
+ * allow `a: command without code block`
 
 ### Bugs: 
 
