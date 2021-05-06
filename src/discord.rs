@@ -182,7 +182,7 @@ impl Handler {
         Ok(())
     }
 
-    async fn apply_run(&self, term: TermID, cmd: String) -> Result<(), Error> {
+    async fn apply_run(&self, term: TermID, mut cmd: String) -> Result<(), Error> {
         println!("applying `{}` onto {}", cmd, term);
 
         let sender = self
@@ -192,6 +192,10 @@ impl Handler {
             .get(&term)
             .cloned()
             .ok_or(Error::NoTerminal(term))?;
+
+        // TODO: Fix this
+        // temporary hack to include stderr in discord terminals
+        cmd.push_str(" 2>&1");
 
         let mut shell = process::Command::new("bash");
         shell.arg("-c").arg(&cmd);
@@ -223,7 +227,7 @@ impl EventHandler for Handler {
         if msg.content.as_bytes().first() == Some(&self.settings.prefix)
             && self.is_authorized(&ctx, &msg).await
         {
-            println!("{}", &msg.content);
+            println!("parsing {}", &msg.content);
 
             let tty_identifier = {
                 let pos = msg.content.as_bytes()[1..]
