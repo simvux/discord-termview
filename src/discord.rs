@@ -105,6 +105,7 @@ impl Handler {
             parser::Command::New { height, private } => {
                 self.apply_new(ctx, msg, term, height, private).await
             }
+            parser::Command::Remove => self.apply_remove(ctx, msg, term).await,
             parser::Command::Run(cmd) => self.apply_run(term, cmd).await,
         }
     }
@@ -135,6 +136,21 @@ impl Handler {
                     .await
             }
         }
+    }
+
+    async fn apply_remove(
+        &self,
+        _ctx: &Context,
+        _msg: &Message,
+        term: TermID,
+    ) -> Result<(), Error> {
+        let mut ttys = self.ttys.lock().await;
+        ttys.get(&term)
+            .ok_or(Error::NoTerminal(term))?
+            .send(terminal::Command::Exit)
+            .ok();
+        ttys.remove(&term);
+        Ok(())
     }
 
     async fn spawn_new_terminal(
@@ -197,10 +213,6 @@ impl Handler {
     }
 }
 
-fn render_terminal_layout(contents: String) -> String {
-    format!("```\n{}```", contents)
-}
-
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -230,6 +242,10 @@ impl EventHandler for Handler {
     }
 }
 
+fn render_terminal_layout(contents: String) -> String {
+    format!("```\n{}```", contents)
+}
+
 struct Renderer {
     frame_reciever: channel::Receiver<Packet>,
 }
@@ -244,17 +260,26 @@ impl Renderer {
                     println!("terminal {} finished it's command", messageid);
                 }
                 session::Event::Update(frame) => {
-                    if let Err(e) = channelid
-                        .edit_message(&ctx, messageid, |m| {
-                            m.content(render_terminal_layout(frame));
-                            m
-                        })
-                        .await
-                    {
+                    if let Err(e) = self.refresh(&ctx, channelid, messageid, frame).await {
                         eprintln!("frame update error: {}", e);
                     };
                 }
             }
         }
+    }
+
+    async fn refresh(
+        &self,
+        ctx: &Context,
+        channelid: ChannelId,
+        messageid: MessageId,
+        frame: String,
+    ) -> Result<Message, serenity::Error> {
+        channelid
+            .edit_message(&ctx, messageid, |m| {
+                m.content(render_terminal_layout(frame));
+                m
+            })
+            .await
     }
 }

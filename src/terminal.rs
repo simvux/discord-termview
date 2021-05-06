@@ -75,6 +75,13 @@ impl<H: Handler + Send + 'static> Runner<H> {
                 }
                 Command::Exit => {
                     println!("exiting listener for terminal");
+
+                    self.window
+                        .buffer
+                        .push_back(String::from(" <session closed> ").into_boxed_str());
+
+                    self.handler.update(&mut self.window);
+
                     break;
                 }
             }

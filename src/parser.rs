@@ -3,6 +3,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum Command {
     New { height: usize, private: bool },
+    Remove,
     Run(String),
 }
 
@@ -17,6 +18,7 @@ pub fn parse(raw: &str) -> Result<Command, Error> {
 
     match header {
         "new" => parse_new(iter),
+        "remove" => Ok(parse_remove(iter)),
         faulty => Err(Error::UnrecognizedCommand(faulty.to_string())),
     }
 }
@@ -25,6 +27,10 @@ fn parse_run(raw: &str) -> Result<Command, Error> {
     let ends_at = raw[1..].find('`').ok_or(Error::MissingEndToCodeBlock)?;
     let code = &raw[1..=ends_at];
     Ok(Command::Run(code.to_string()))
+}
+
+fn parse_remove<'a>(_iter: impl Iterator<Item = &'a str>) -> Command {
+    Command::Remove
 }
 
 fn parse_new<'a>(iter: impl Iterator<Item = &'a str>) -> Result<Command, Error> {
