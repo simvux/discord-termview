@@ -52,7 +52,7 @@ impl<H: Handler + Send + 'static> Runner<H> {
             window: Window::new(height),
             timer: Timer {
                 // we set it up so that the first update will happen after one second
-                last: SystemTime::now() - Duration::from_secs(COOLDOWN - 1),
+                last: SystemTime::now() - Duration::from_secs(COOLDOWN + 1),
             },
             handler,
             command_buffer,
