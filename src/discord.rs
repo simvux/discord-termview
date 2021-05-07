@@ -12,6 +12,7 @@ pub type Packet = ((ChannelId, MessageId), session::Event);
 type TermID = String;
 
 const FRAME_BUFFERING: usize = 10;
+const DISCORD_LENGTH_LIMIT: usize = 2000;
 
 pub struct Handler {
     frame_sender: channel::Sender<Packet>,
@@ -143,7 +144,7 @@ impl Handler {
         term: TermID,
     ) -> Result<(), Error> {
         let tty = self.ttys.lock().await.get(&term).cloned();
-        tty.ok_or(Error::NoTerminal(term.clone()))?
+        tty.ok_or_else(|| Error::NoTerminal(term.clone()))?
             .send(terminal::Command::Exit)
             .ok();
 
@@ -161,7 +162,7 @@ impl Handler {
         _private: bool,
     ) -> Result<(), Error> {
         let reply = msg
-            .reply(ctx, render_terminal_layout(String::new()))
+            .reply(ctx, render_terminal_layout(" >>> "))
             .await
             .map_err(|_| Error::CannotRespond)?;
 
@@ -235,11 +236,13 @@ impl EventHandler for Handler {
                     .position(|&b| b == b' ')
                     .unwrap_or(msg.content.len() - 1);
 
-                msg.content[1..pos].to_string()
+                msg.content[1..=pos].to_string()
             };
 
+            let cmd_portion = msg.content[tty_identifier.len() + 2..].trim();
+
             if let Err(e) = self
-                .parse_and_apply_command(&ctx, &msg, tty_identifier, msg.content[2..].trim())
+                .parse_and_apply_command(&ctx, &msg, tty_identifier, cmd_portion)
                 .await
             {
                 self.respond_with_error(&ctx, e, msg.channel_id).await;
@@ -253,11 +256,12 @@ impl EventHandler for Handler {
         let renderer = Renderer {
             frame_reciever: self.frame_reciever.clone(),
         };
+
         tokio::spawn(async move { renderer.render_pipeline(ctx).await });
     }
 }
 
-fn render_terminal_layout(contents: String) -> String {
+fn render_terminal_layout<C: std::fmt::Display>(contents: C) -> String {
     format!("```\n{}```", contents)
 }
 
@@ -288,8 +292,19 @@ impl Renderer {
         ctx: &Context,
         channelid: ChannelId,
         messageid: MessageId,
-        frame: String,
+        mut frame: String,
     ) -> Result<Message, serenity::Error> {
+        while frame.len() > (DISCORD_LENGTH_LIMIT - 10) {
+            // `- 10` because formatting hasn't been applied
+
+            println!(
+                "shrinking message since discord message length limit is exceded even with height limitation"
+            );
+
+            let line_end = frame.find(|c| c == '\n').unwrap();
+            frame.replace_range(0..=line_end, "");
+        }
+
         channelid
             .edit_message(&ctx, messageid, |m| {
                 m.content(render_terminal_layout(frame));

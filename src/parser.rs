@@ -21,7 +21,7 @@ pub fn parse(raw: &str) -> Result<Command, Error> {
     match header {
         "new" => parse_new(iter),
         "remove" => Ok(parse_remove(iter)),
-        "run" => Ok(Command::Run(iter.collect::<String>())),
+        pat @ "run" => Ok(Command::Run(raw[pat.len() + 1..].trim().to_string())),
         faulty => Err(Error::UnrecognizedCommand(faulty.to_string())),
     }
 }
@@ -38,7 +38,7 @@ fn parse_remove<'a>(_iter: impl Iterator<Item = &'a str>) -> Command {
 
 fn parse_new<'a>(iter: impl Iterator<Item = &'a str>) -> Result<Command, Error> {
     let mut height = 20;
-    let mut private = true;
+    let mut private = false;
 
     for word in iter {
         if word.starts_with("height") {
