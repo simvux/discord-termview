@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::process;
 
 pub type Packet = ((ChannelId, MessageId), session::Event);
-type TermID = u8;
+type TermID = String;
 
 const FRAME_BUFFERING: usize = 10;
+const DISCORD_LENGTH_LIMIT: usize = 2000;
 
 pub struct Handler {
     frame_sender: channel::Sender<Packet>,
@@ -23,21 +24,21 @@ pub struct Handler {
 
 pub struct Settings {
     allowed_roles: Vec<RoleId>,
-    seperator: u8,
+    prefix: u8,
 }
 
 impl Settings {
     pub fn new(allowed_roles: Vec<serenity::model::id::RoleId>, seperator: u8) -> Self {
         Self {
             allowed_roles,
-            seperator,
+            prefix: seperator,
         }
     }
 
     pub fn parse() -> Self {
         let seperator = std::env::var("SEPERATOR")
             .map(|s| s.as_bytes()[0])
-            .unwrap_or(b':');
+            .unwrap_or(b'$');
 
         let allowed_roles = std::env::var("ALLOWED_ROLES")
             .expect("missing semi-colon ALLOWED_ROLES variable containing channel ID's")
@@ -48,7 +49,7 @@ impl Settings {
 
         Settings {
             allowed_roles,
-            seperator,
+            prefix: seperator,
         }
     }
 }
@@ -63,7 +64,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Parser(err) => err.fmt(f),
-            Error::NoTerminal(term) => write!(f, "terminal `{}` not found", *term as char),
+            Error::NoTerminal(term) => write!(f, "terminal `{}` not found", term),
             Error::CannotRespond => f.write_str("cannot respond to message. Missing permissions?"),
         }
     }
@@ -118,12 +119,11 @@ impl Handler {
         height: usize,
         private: bool,
     ) -> Result<(), Error> {
-        let ttys = self.ttys.lock().await;
-        match ttys.get(&term) {
+        let tty = self.ttys.lock().await.get(&term).cloned();
+        match tty {
             Some(sender) => {
                 // send exit signal; then create new
                 sender.send(terminal::Command::Exit).unwrap();
-                drop(ttys);
 
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -131,7 +131,6 @@ impl Handler {
                     .await
             }
             None => {
-                drop(ttys);
                 self.spawn_new_terminal(ctx, msg, term, height, private)
                     .await
             }
@@ -144,12 +143,13 @@ impl Handler {
         _msg: &Message,
         term: TermID,
     ) -> Result<(), Error> {
-        let mut ttys = self.ttys.lock().await;
-        ttys.get(&term)
-            .ok_or(Error::NoTerminal(term))?
+        let tty = self.ttys.lock().await.get(&term).cloned();
+        tty.ok_or_else(|| Error::NoTerminal(term.clone()))?
             .send(terminal::Command::Exit)
             .ok();
-        ttys.remove(&term);
+
+        self.ttys.lock().await.remove(&term);
+
         Ok(())
     }
 
@@ -162,7 +162,7 @@ impl Handler {
         _private: bool,
     ) -> Result<(), Error> {
         let reply = msg
-            .reply(ctx, render_terminal_layout(String::new()))
+            .reply(ctx, render_terminal_layout(" >>> "))
             .await
             .map_err(|_| Error::CannotRespond)?;
 
@@ -171,7 +171,7 @@ impl Handler {
 
         let (runner, command_sender) = terminal::Runner::init(ttysession, height);
 
-        if let Some(_existing) = self.ttys.lock().await.insert(term, command_sender) {
+        if let Some(_existing) = self.ttys.lock().await.insert(term.clone(), command_sender) {
             eprintln!(
                 "WARNING: tty `{}` refused to die in time, this might create a zombie process",
                 term
@@ -183,11 +183,20 @@ impl Handler {
         Ok(())
     }
 
-    async fn apply_run(&self, term: TermID, cmd: String) -> Result<(), Error> {
-        println!("applying `{}` onto {}", cmd, term as char);
+    async fn apply_run(&self, term: TermID, mut cmd: String) -> Result<(), Error> {
+        println!("applying `{}` onto {}", cmd, term);
 
-        let ttys = self.ttys.lock().await;
-        let sender = ttys.get(&term).ok_or(Error::NoTerminal(term))?;
+        let sender = self
+            .ttys
+            .lock()
+            .await
+            .get(&term)
+            .cloned()
+            .ok_or(Error::NoTerminal(term))?;
+
+        // TODO: Fix this
+        // temporary hack to include stderr in discord terminals
+        cmd.push_str(" 2>&1");
 
         let mut shell = process::Command::new("bash");
         shell.arg("-c").arg(&cmd);
@@ -216,15 +225,24 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if msg.content.bytes().nth(1) == Some(self.settings.seperator)
+        if msg.content.as_bytes().first() == Some(&self.settings.prefix)
             && self.is_authorized(&ctx, &msg).await
         {
-            println!("{}", &msg.content);
+            println!("parsing {}", &msg.content);
 
-            let tty_identifier = msg.content.as_bytes()[0];
+            let tty_identifier = {
+                let pos = msg.content.as_bytes()[1..]
+                    .iter()
+                    .position(|&b| b == b' ')
+                    .unwrap_or(msg.content.len() - 1);
+
+                msg.content[1..=pos].to_string()
+            };
+
+            let cmd_portion = msg.content[tty_identifier.len() + 2..].trim();
 
             if let Err(e) = self
-                .parse_and_apply_command(&ctx, &msg, tty_identifier, msg.content[2..].trim())
+                .parse_and_apply_command(&ctx, &msg, tty_identifier, cmd_portion)
                 .await
             {
                 self.respond_with_error(&ctx, e, msg.channel_id).await;
@@ -238,11 +256,12 @@ impl EventHandler for Handler {
         let renderer = Renderer {
             frame_reciever: self.frame_reciever.clone(),
         };
+
         tokio::spawn(async move { renderer.render_pipeline(ctx).await });
     }
 }
 
-fn render_terminal_layout(contents: String) -> String {
+fn render_terminal_layout<C: std::fmt::Display>(contents: C) -> String {
     format!("```\n{}```", contents)
 }
 
@@ -273,8 +292,19 @@ impl Renderer {
         ctx: &Context,
         channelid: ChannelId,
         messageid: MessageId,
-        frame: String,
+        mut frame: String,
     ) -> Result<Message, serenity::Error> {
+        while frame.len() > (DISCORD_LENGTH_LIMIT - 10) {
+            // `- 10` because formatting hasn't been applied
+
+            println!(
+                "shrinking message since discord message length limit is exceded even with height limitation"
+            );
+
+            let line_end = frame.find(|c| c == '\n').unwrap();
+            frame.replace_range(0..=line_end, "");
+        }
+
         channelid
             .edit_message(&ctx, messageid, |m| {
                 m.content(render_terminal_layout(frame));

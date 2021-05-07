@@ -55,4 +55,12 @@ impl<ID: std::fmt::Debug + Clone> terminal::Handler for TTYSession<ID> {
             eprintln!("TTY {:?} failed to send exit signal: {}", self.id, e)
         }
     }
+
+    fn on_terminal_exit(&mut self, window: &mut Window) {
+        window
+            .buffer
+            .push_back(String::from(" <session closed> ").into_boxed_str());
+
+        self.update(window)
+    }
 }

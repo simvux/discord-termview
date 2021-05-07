@@ -1,5 +1,7 @@
 use std::fmt;
 
+const HEIGHT_LIMIT: usize = 1000;
+
 #[derive(Debug)]
 pub enum Command {
     New { height: usize, private: bool },
@@ -19,6 +21,7 @@ pub fn parse(raw: &str) -> Result<Command, Error> {
     match header {
         "new" => parse_new(iter),
         "remove" => Ok(parse_remove(iter)),
+        pat @ "run" => Ok(Command::Run(raw[pat.len() + 1..].trim().to_string())),
         faulty => Err(Error::UnrecognizedCommand(faulty.to_string())),
     }
 }
@@ -35,7 +38,7 @@ fn parse_remove<'a>(_iter: impl Iterator<Item = &'a str>) -> Command {
 
 fn parse_new<'a>(iter: impl Iterator<Item = &'a str>) -> Result<Command, Error> {
     let mut height = 20;
-    let mut private = true;
+    let mut private = false;
 
     for word in iter {
         if word.starts_with("height") {
@@ -50,6 +53,10 @@ fn parse_new<'a>(iter: impl Iterator<Item = &'a str>) -> Result<Command, Error> 
         }
     }
 
+    if height > HEIGHT_LIMIT {
+        return Err(Error::HeightToLarge(height));
+    }
+
     Ok(Command::New { height, private })
 }
 
@@ -58,6 +65,7 @@ pub enum Error {
     NoAction,
     UnrecognizedCommand(String),
     MissingArgument(&'static str),
+    HeightToLarge(usize),
     InvalidNumber,
     InvalidBool,
     MissingEndToCodeBlock,
@@ -71,6 +79,11 @@ impl fmt::Display for Error {
             Error::MissingArgument(missing) => write!(f, "missing required argument '{}'", missing),
             Error::InvalidNumber => f.write_str("not a valid number"),
             Error::InvalidBool => f.write_str("not a valid boolean"),
+            Error::HeightToLarge(height) => write!(
+                f,
+                "height limit is {} but you tried to set it to {}",
+                HEIGHT_LIMIT, height
+            ),
             Error::MissingEndToCodeBlock => f.write_str("missing end to code block"),
         }
     }

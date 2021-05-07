@@ -7,6 +7,8 @@ use std::process;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
 
+const COOLDOWN: u64 = 4;
+
 /// Create your own listener to capture each frame outputted by the terminal
 ///
 /// Frame rate is low enough to comply with rate limits and will dynamically change depending on
@@ -14,6 +16,7 @@ use std::time::{Duration, SystemTime};
 pub trait Handler {
     fn update(&mut self, window: &mut Window);
     fn on_command_exit(&mut self, window: &mut Window);
+    fn on_terminal_exit(&mut self, window: &mut Window);
 }
 
 pub enum Command {
@@ -48,7 +51,8 @@ impl<H: Handler + Send + 'static> Runner<H> {
         Runner {
             window: Window::new(height),
             timer: Timer {
-                last: SystemTime::now() - Duration::from_secs(5),
+                // we set it up so that the first update will happen after one second
+                last: SystemTime::now() - Duration::from_secs(COOLDOWN + 1),
             },
             handler,
             command_buffer,
@@ -74,14 +78,9 @@ impl<H: Handler + Send + 'static> Runner<H> {
                     self.run(cmd)
                 }
                 Command::Exit => {
+                    self.handler.on_terminal_exit(&mut self.window);
+
                     println!("exiting listener for terminal");
-
-                    self.window
-                        .buffer
-                        .push_back(String::from(" <session closed> ").into_boxed_str());
-
-                    self.handler.update(&mut self.window);
-
                     break;
                 }
             }
@@ -101,9 +100,9 @@ impl<H: Handler + Send + 'static> Runner<H> {
         for line in reader.lines() {
             let line = line.unwrap();
 
-            self.window += line;
+            self.window += line.clone();
 
-            let should_update_frame = self.timer.check_and_update(Duration::from_secs(4));
+            let should_update_frame = self.timer.check_and_update(Duration::from_secs(COOLDOWN));
             if should_update_frame {
                 self.handler.update(&mut self.window);
             }
@@ -135,7 +134,6 @@ impl Window {
 
     fn shrink_to_limit(&mut self) -> Option<Box<str>> {
         if self.over_height_limit() {
-            println!("height limit exceeded, shrinking buffer");
             self.buffer.pop_front()
         } else {
             None

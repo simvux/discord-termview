@@ -34,7 +34,6 @@ Edit `build.sh` with your token and role-id
 
  * make sessions automatically expire (difficult)
  * make the terminal move/repost if it's to far away (moderate)
- * longer terminal names (easy)
  * allow killing terminals (difficult)
  * allow multi-line code blocks (easy)
  * help message (easy)
@@ -42,7 +41,8 @@ Edit `build.sh` with your token and role-id
 ### Bugs: 
 
  * Terminals that have existed before cannot be recreated? 
- * Emojis are viewed as malformed commands if they're the start of a message
  * Messages that end to quickly fail to ever attach their output to a frame
- * Stderr is completely missing
  * It's really slow, even error messages take a long time. Is it because they're delayed form rate limitor due to frame updates of terminals?
+ * Some commands like `xbps-query -Rs ` can just completely lock up the entire pipeline
+ * Creation of new terminal breaks as soon as any command has finished it's execution
+     any `send_message` or `reply` calls to discord seem to just freeze.
