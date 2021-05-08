@@ -8,5 +8,5 @@ edition = "2018"
 
 [dependencies]
 serenity = { version = "0.10", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache"] }
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "process"] }
 async-trait = "*"
