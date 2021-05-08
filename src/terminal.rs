@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::ops::AddAssign;
-use std::process;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process;
 use tokio::sync::mpsc as channel;
 
 const COOLDOWN: u64 = 4;
@@ -23,7 +22,7 @@ pub trait Handler {
 
 #[derive(Debug)]
 pub enum Command {
-    Run(std::process::Command),
+    Run(process::Command),
     Exit,
 }
 
@@ -93,17 +92,15 @@ impl<H: Handler + Send + 'static> Runner<H> {
 
     /// Block and run a shell command
     async fn run(&mut self, mut exec: process::Command) {
-        let handle = exec
+        let mut child = exec
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
 
-        let reader = BufReader::new(handle.stdout.unwrap());
+        let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
 
-        for line in reader.lines() {
-            let line = line.unwrap();
-
+        while let Some(line) = reader.next_line().await.unwrap() {
             self.window += line.clone();
 
             let should_update_frame = self.timer.check_and_update(Duration::from_secs(COOLDOWN));
@@ -112,7 +109,10 @@ impl<H: Handler + Send + 'static> Runner<H> {
             }
         }
 
-        println!("command exited with status {}", exec.status().unwrap());
+        println!(
+            "command exited with status {:?}",
+            child.wait().await.unwrap()
+        );
 
         self.handler.on_command_exit(&mut self.window).await;
     }

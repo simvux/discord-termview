@@ -5,7 +5,7 @@ use serenity::{
     prelude::*,
 };
 use std::collections::HashMap;
-use std::process;
+use tokio::process;
 use tokio::sync::mpsc as channel;
 use tokio::sync::Mutex;
 
