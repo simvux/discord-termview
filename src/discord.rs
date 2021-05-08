@@ -1,5 +1,4 @@
 use super::{parser, session, terminal};
-use crossbeam::channel;
 use serenity::{
     async_trait,
     model::{channel::Message, gateway::Ready, id::ChannelId, id::MessageId, id::RoleId},
@@ -7,16 +6,18 @@ use serenity::{
 };
 use std::collections::HashMap;
 use std::process;
+use tokio::sync::mpsc as channel;
+use tokio::sync::Mutex;
 
 pub type Packet = ((ChannelId, MessageId), session::Event);
 type TermID = String;
 
-const FRAME_BUFFERING: usize = 10;
+const FRAME_BUFFERING: usize = 5;
 const DISCORD_LENGTH_LIMIT: usize = 2000;
 
 pub struct Handler {
     frame_sender: channel::Sender<Packet>,
-    frame_reciever: channel::Receiver<Packet>,
+    frame_reciever: Mutex<Option<channel::Receiver<Packet>>>,
 
     settings: Settings,
     ttys: Mutex<HashMap<TermID, channel::Sender<terminal::Command>>>,
@@ -72,11 +73,11 @@ impl std::fmt::Display for Error {
 
 impl Handler {
     pub fn new(settings: Settings) -> Self {
-        let (frame_sender, frame_reciever) = crossbeam::channel::bounded(FRAME_BUFFERING);
+        let (frame_sender, frame_reciever) = channel::channel(FRAME_BUFFERING);
 
         Self {
             frame_sender,
-            frame_reciever,
+            frame_reciever: Mutex::new(Some(frame_reciever)),
             settings,
             ttys: Mutex::new(HashMap::new()),
         }
@@ -123,7 +124,7 @@ impl Handler {
         match tty {
             Some(sender) => {
                 // send exit signal; then create new
-                sender.send(terminal::Command::Exit).unwrap();
+                sender.send(terminal::Command::Exit).await.unwrap();
 
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -146,6 +147,7 @@ impl Handler {
         let tty = self.ttys.lock().await.get(&term).cloned();
         tty.ok_or_else(|| Error::NoTerminal(term.clone()))?
             .send(terminal::Command::Exit)
+            .await
             .ok();
 
         self.ttys.lock().await.remove(&term);
@@ -178,7 +180,7 @@ impl Handler {
             )
         }
 
-        std::thread::spawn(|| runner.listen());
+        tokio::spawn(async move { runner.listen().await });
 
         Ok(())
     }
@@ -202,7 +204,7 @@ impl Handler {
         shell.arg("-c").arg(&cmd);
 
         println!("handing the command to the terminal instance");
-        sender.send(terminal::Command::Run(shell)).unwrap();
+        sender.send(terminal::Command::Run(shell)).await.unwrap();
 
         Ok(())
     }
@@ -253,8 +255,13 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("connected to discord as {}", ready.user.name);
 
-        let renderer = Renderer {
-            frame_reciever: self.frame_reciever.clone(),
+        let mut renderer = Renderer {
+            frame_reciever: self
+                .frame_reciever
+                .lock()
+                .await
+                .take()
+                .expect("no reciever channel"),
         };
 
         tokio::spawn(async move { renderer.render_pipeline(ctx).await });
@@ -270,9 +277,9 @@ struct Renderer {
 }
 
 impl Renderer {
-    async fn render_pipeline(&self, ctx: Context) {
+    async fn render_pipeline(&mut self, ctx: Context) {
         loop {
-            let ((channelid, messageid), event) = self.frame_reciever.recv().unwrap();
+            let ((channelid, messageid), event) = self.frame_reciever.recv().await.unwrap();
 
             match event {
                 session::Event::Ready => {

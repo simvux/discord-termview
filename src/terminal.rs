@@ -1,4 +1,4 @@
-use crossbeam::channel;
+use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -6,6 +6,7 @@ use std::ops::AddAssign;
 use std::process;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
+use tokio::sync::mpsc as channel;
 
 const COOLDOWN: u64 = 4;
 
@@ -13,12 +14,14 @@ const COOLDOWN: u64 = 4;
 ///
 /// Frame rate is low enough to comply with rate limits and will dynamically change depending on
 /// the amount output.
+#[async_trait]
 pub trait Handler {
-    fn update(&mut self, window: &mut Window);
-    fn on_command_exit(&mut self, window: &mut Window);
-    fn on_terminal_exit(&mut self, window: &mut Window);
+    async fn update(&mut self, window: &mut Window);
+    async fn on_command_exit(&mut self, window: &mut Window);
+    async fn on_terminal_exit(&mut self, window: &mut Window);
 }
 
+#[derive(Debug)]
 pub enum Command {
     Run(std::process::Command),
     Exit,
@@ -60,25 +63,26 @@ impl<H: Handler + Send + 'static> Runner<H> {
     }
 
     pub fn init(handler: H, height: usize) -> (Runner<H>, channel::Sender<Command>) {
-        let (sender, reciever) = channel::unbounded();
+        let (sender, reciever) = channel::channel(10);
         let runner = Runner::new(handler, height, reciever);
         (runner, sender)
     }
 
     /// Wait for commands forever
-    pub fn listen(mut self) {
+    pub async fn listen(mut self) {
         loop {
             match self
                 .command_buffer
                 .recv()
+                .await
                 .expect("command_buffer unsafely closed")
             {
                 Command::Run(cmd) => {
                     println!("continuing with next queued command");
-                    self.run(cmd)
+                    self.run(cmd).await
                 }
                 Command::Exit => {
-                    self.handler.on_terminal_exit(&mut self.window);
+                    self.handler.on_terminal_exit(&mut self.window).await;
 
                     println!("exiting listener for terminal");
                     break;
@@ -88,7 +92,7 @@ impl<H: Handler + Send + 'static> Runner<H> {
     }
 
     /// Block and run a shell command
-    fn run(&mut self, mut exec: process::Command) {
+    async fn run(&mut self, mut exec: process::Command) {
         let handle = exec
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -104,13 +108,13 @@ impl<H: Handler + Send + 'static> Runner<H> {
 
             let should_update_frame = self.timer.check_and_update(Duration::from_secs(COOLDOWN));
             if should_update_frame {
-                self.handler.update(&mut self.window);
+                self.handler.update(&mut self.window).await;
             }
         }
 
         println!("command exited with status {}", exec.status().unwrap());
 
-        self.handler.on_command_exit(&mut self.window);
+        self.handler.on_command_exit(&mut self.window).await;
     }
 }
 

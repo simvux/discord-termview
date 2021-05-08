@@ -1,7 +1,8 @@
 use super::terminal;
-use crossbeam::channel;
+use async_trait::async_trait;
 use std::collections::VecDeque;
 use terminal::Window;
+use tokio::sync::mpsc as channel;
 
 pub enum Event {
     Update(String),
@@ -35,32 +36,37 @@ fn render_snapshot(buffer: &VecDeque<Box<str>>) -> String {
     snapshot
 }
 
-impl<ID: std::fmt::Debug + Clone> terminal::Handler for TTYSession<ID> {
-    fn update(&mut self, window: &mut Window) {
+#[async_trait]
+impl<ID: std::fmt::Debug + Clone + Send + Sync> terminal::Handler for TTYSession<ID> {
+    async fn update(&mut self, window: &mut Window) {
         println!("updating terminal `{:?}`", self.id);
 
         let snapshot = render_snapshot(&window.buffer);
 
-        if let Err(e) = self.sender.send((self.id.clone(), Event::Update(snapshot))) {
+        if let Err(e) = self
+            .sender
+            .send((self.id.clone(), Event::Update(snapshot)))
+            .await
+        {
             eprintln!("TTY {:?} failed to send it's data: {}", self.id, e)
         }
     }
 
-    fn on_command_exit(&mut self, window: &mut Window) {
+    async fn on_command_exit(&mut self, window: &mut Window) {
         self.append_prompt(window);
 
-        self.update(window);
+        self.update(window).await;
 
-        if let Err(e) = self.sender.send((self.id.clone(), Event::Ready)) {
+        if let Err(e) = self.sender.send((self.id.clone(), Event::Ready)).await {
             eprintln!("TTY {:?} failed to send exit signal: {}", self.id, e)
         }
     }
 
-    fn on_terminal_exit(&mut self, window: &mut Window) {
+    async fn on_terminal_exit(&mut self, window: &mut Window) {
         window
             .buffer
             .push_back(String::from(" <session closed> ").into_boxed_str());
 
-        self.update(window)
+        self.update(window).await
     }
 }
