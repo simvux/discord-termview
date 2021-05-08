@@ -40,6 +40,4 @@ Edit `build.sh` with your token and role-id
 
 ### Bugs: 
 
- * Messages that end to quickly fail to ever attach their output to a frame
  * It's really slow, even error messages take a long time. Is it because they're delayed form rate limitor due to frame updates of terminals?
- * Some commands like `xbps-query -Rs ` can just completely lock up the entire pipeline
