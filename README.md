@@ -1,3 +1,4 @@
+
 # Termview
 
 ## WARNING
@@ -5,6 +6,10 @@
 Using this bot can be exceedingly dangerous since you're basically granting people direct access to your shell. 
 
 Make sure you know what you're doing! 
+
+## Example
+
+https://user-images.githubusercontent.com/29797280/118414771-c8864080-b6a6-11eb-9efb-70933ba84b95.mp4
 
 ## Running
 
