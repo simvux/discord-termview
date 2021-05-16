@@ -37,7 +37,3 @@ Edit `build.sh` with your token and role-id
  * allow killing terminals (difficult)
  * allow multi-line code blocks (easy)
  * help message (easy)
-
-### Bugs: 
-
- * It's really slow, even error messages take a long time. Is it because they're delayed form rate limitor due to frame updates of terminals?
