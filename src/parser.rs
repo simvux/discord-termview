@@ -2,6 +2,7 @@ use std::fmt;
 
 const HEIGHT_LIMIT: usize = 1000;
 
+/// A syntatically valid parsed user command
 #[derive(Debug)]
 pub enum Command {
     New { height: usize, private: bool },
@@ -9,6 +10,7 @@ pub enum Command {
     Run(String),
 }
 
+/// Attempt to parse `raw` to a command
 pub fn parse(raw: &str) -> Result<Command, Error> {
     if raw.starts_with('`') {
         return parse_run(raw);
@@ -26,16 +28,19 @@ pub fn parse(raw: &str) -> Result<Command, Error> {
     }
 }
 
+/// parse the `run` command
 fn parse_run(raw: &str) -> Result<Command, Error> {
     let ends_at = raw[1..].find('`').ok_or(Error::MissingEndToCodeBlock)?;
     let code = &raw[1..=ends_at];
     Ok(Command::Run(code.to_string()))
 }
 
+/// parse the `remove` command
 fn parse_remove<'a>(_iter: impl Iterator<Item = &'a str>) -> Command {
     Command::Remove
 }
 
+/// parse the `new` command
 fn parse_new<'a>(iter: impl Iterator<Item = &'a str>) -> Result<Command, Error> {
     let mut height = 20;
     let mut private = false;

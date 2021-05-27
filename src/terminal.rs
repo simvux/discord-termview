@@ -12,7 +12,7 @@ const COOLDOWN: u64 = 4;
 /// Create your own listener to capture each frame outputted by the terminal
 ///
 /// Frame rate is low enough to comply with rate limits and will dynamically change depending on
-/// the amount output.
+/// the amount of output.
 #[async_trait]
 pub trait Handler {
     async fn update(&mut self, window: &mut Window);
@@ -20,6 +20,7 @@ pub trait Handler {
     async fn on_terminal_exit(&mut self, window: &mut Window);
 }
 
+/// Signals sent via the command buffer to control the terminal.
 #[derive(Debug)]
 pub enum Command {
     Run(process::Command),
@@ -41,6 +42,7 @@ pub struct Runner<H: Handler> {
     command_buffer: channel::Receiver<Command>,
 }
 
+/// The state of an OS process
 struct Process {
     reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     process: process::Child,
@@ -205,6 +207,10 @@ impl Window {
     }
 }
 
+/// We use `Timer` to control whether a discord message should be edited to produce a new frame or not.
+///
+/// Serenity does have internal rate-limiting. However; we don't want to queue up hundreds of
+/// message edit commands for serenity to go through.
 struct Timer {
     last: SystemTime,
 }

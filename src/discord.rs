@@ -15,6 +15,11 @@ type TermID = String;
 const FRAME_BUFFERING: usize = 5;
 const DISCORD_LENGTH_LIMIT: usize = 2000;
 
+/// The main router for information.
+///
+/// Here we have a lookup of all open terminals and set up new terminals.
+///
+/// The `discord::Handler` is also the only component that communicates directly with the Serenity API.
 pub struct Handler {
     frame_sender: channel::Sender<Packet>,
     frame_reciever: Mutex<Option<channel::Receiver<Packet>>>,
@@ -24,8 +29,8 @@ pub struct Handler {
 }
 
 pub struct Settings {
-    allowed_roles: Vec<RoleId>,
-    prefix: u8,
+    pub allowed_roles: Vec<RoleId>,
+    pub prefix: u8,
 }
 
 impl Settings {
@@ -105,14 +110,14 @@ impl Handler {
 
         match action {
             parser::Command::New { height, private } => {
-                self.apply_new(ctx, msg, term, height, private).await
+                self.create_terminal(ctx, msg, term, height, private).await
             }
-            parser::Command::Remove => self.apply_remove(ctx, msg, term).await,
-            parser::Command::Run(cmd) => self.apply_run(term, cmd).await,
+            parser::Command::Remove => self.remove_terminal(ctx, msg, term).await,
+            parser::Command::Run(cmd) => self.run_command_in_terminal(term, cmd).await,
         }
     }
 
-    async fn apply_new(
+    async fn create_terminal(
         &self,
         ctx: &Context,
         msg: &Message,
@@ -138,7 +143,7 @@ impl Handler {
         }
     }
 
-    async fn apply_remove(
+    async fn remove_terminal(
         &self,
         _ctx: &Context,
         _msg: &Message,
@@ -185,7 +190,7 @@ impl Handler {
         Ok(())
     }
 
-    async fn apply_run(&self, term: TermID, mut cmd: String) -> Result<(), Error> {
+    async fn run_command_in_terminal(&self, term: TermID, mut cmd: String) -> Result<(), Error> {
         println!("applying `{}` onto {}", cmd, term);
 
         let sender = self
@@ -224,6 +229,7 @@ impl Handler {
     }
 }
 
+// our entry-point for the serenity API
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
@@ -272,11 +278,13 @@ fn render_terminal_layout<C: std::fmt::Display>(contents: C) -> String {
     format!("```\n{}```", contents)
 }
 
+/// The renderer recieves frames as channel signals and renders them through the serenity API
 struct Renderer {
     frame_reciever: channel::Receiver<Packet>,
 }
 
 impl Renderer {
+    /// Start the render loop
     async fn render_pipeline(&mut self, ctx: Context) {
         loop {
             let ((channelid, messageid), event) = self.frame_reciever.recv().await.unwrap();
@@ -294,6 +302,7 @@ impl Renderer {
         }
     }
 
+    /// Render a frame to a discord message
     async fn refresh(
         &self,
         ctx: &Context,
