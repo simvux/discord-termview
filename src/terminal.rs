@@ -32,8 +32,18 @@ pub struct Runner<H: Handler> {
     window: Window,
     timer: Timer,
 
+    running: Option<Process>,
+    pending: VecDeque<process::Command>,
+
+    should_be_removed: bool,
+
     handler: H,
     command_buffer: channel::Receiver<Command>,
+}
+
+struct Process {
+    reader: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    process: process::Child,
 }
 
 impl AddAssign<String> for Window {
@@ -56,6 +66,9 @@ impl<H: Handler + Send + 'static> Runner<H> {
                 // we set it up so that the first update will happen after one second
                 last: SystemTime::now() - Duration::from_secs(COOLDOWN + 1),
             },
+            running: None,
+            should_be_removed: false,
+            pending: VecDeque::new(),
             handler,
             command_buffer,
         }
@@ -67,54 +80,101 @@ impl<H: Handler + Send + 'static> Runner<H> {
         (runner, sender)
     }
 
-    /// Wait for commands forever
+    /// Waits for commands forever
     pub async fn listen(mut self) {
         loop {
-            match self
-                .command_buffer
-                .recv()
-                .await
-                .expect("command_buffer unsafely closed")
-            {
-                Command::Run(cmd) => {
-                    println!("continuing with next queued command");
-                    self.run(cmd).await
+            tokio::select! {
+                msg = self.command_buffer.recv() => {
+                    match msg {
+                        Some(Command::Run(cmd)) => self.pending.push_front(cmd),
+                        Some(Command::Remove) => self.should_be_removed = true,
+                        None => {
+                            // oh huh, our only way to communicate with the terminal has been
+                            // killed. Probably for the best to just remove everything so we
+                            // don't end up with a zombie processes.
+                            self.handler.on_terminal_exit(&mut self.window).await;
+                            self.clean_command().await;
+                            return;
+                        },
+                    }
                 }
-                Command::Remove => {
-                    self.handler.on_terminal_exit(&mut self.window).await;
 
-                    println!("exiting listener for terminal");
-                    break;
+                // whenever we're not recieving a signal
+                _ = async{} => {
+                    match self.running.as_mut() {
+
+                        // we're currently running a command
+                        Some(runtime) => {
+                            // so lets read another line of stdout
+                            if let Some(line) = runtime.reader.next_line().await.unwrap() {
+                                self.window += line.clone();
+                                self.update_if_should().await;
+                            } else {
+                                // there are no more lines, must mean the command is finished
+                                self.handler.on_command_exit(&mut self.window).await;
+                                self.clean_command().await;
+                            }
+                        },
+
+                        // we're not running a command
+                        None => {
+                            match self.pending.pop_back() {
+                                Some(cmd) => self.run(cmd),
+                                None if self.should_be_removed => {
+                                    self.handler.on_terminal_exit(&mut self.window).await;
+                                    return;
+                                }
+
+                                // we have nothing to do. So let's wait a bit to not waste cycles
+                                None => tokio::time::sleep(Duration::from_millis(200)).await,
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Block and run a shell command
-    async fn run(&mut self, mut exec: process::Command) {
-        let mut child = exec
-            .stdout(Stdio::piped())
+    /// Start execution and monitoring of a shell command
+    fn run(&mut self, exec: process::Command) {
+        assert!(self.running.is_none());
+        let mut child = self.spawn(exec);
+
+        let stdout = child.stdout.take().expect("stdout unavailable");
+        let reader = BufReader::new(stdout).lines();
+
+        self.running = Some(Process {
+            process: child,
+            reader,
+        });
+    }
+
+    /// Spawn a shell command
+    fn spawn(&mut self, mut exec: process::Command) -> process::Child {
+        exec.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap();
+            .unwrap()
+    }
 
-        let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
+    /// checks the timer and updates if needed
+    async fn update_if_should(&mut self) {
+        let should_update_frame = self.timer.check_and_update(Duration::from_secs(COOLDOWN));
+        if should_update_frame {
+            self.handler.update(&mut self.window).await;
+        }
+    }
 
-        while let Some(line) = reader.next_line().await.unwrap() {
-            self.window += line.clone();
+    /// sets self.running to `None` and makes sure the running process is dead or dies
+    async fn clean_command(&mut self) -> Option<Process> {
+        let mut cmd = self.running.take()?;
 
-            let should_update_frame = self.timer.check_and_update(Duration::from_secs(COOLDOWN));
-            if should_update_frame {
-                self.handler.update(&mut self.window).await;
-            }
+        if cmd.process.id().is_some() {
+            // seems to still be running
+            cmd.process.kill().await.ok();
         }
 
-        println!(
-            "command exited with status {:?}",
-            child.wait().await.unwrap()
-        );
-
-        self.handler.on_command_exit(&mut self.window).await;
+        Some(cmd)
     }
 }
 
