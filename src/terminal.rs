@@ -23,7 +23,7 @@ pub trait Handler {
 #[derive(Debug)]
 pub enum Command {
     Run(process::Command),
-    Exit,
+    Remove,
 }
 
 /// Runner represents the controlled execution of a command where the commands output is being
@@ -80,7 +80,7 @@ impl<H: Handler + Send + 'static> Runner<H> {
                     println!("continuing with next queued command");
                     self.run(cmd).await
                 }
-                Command::Exit => {
+                Command::Remove => {
                     self.handler.on_terminal_exit(&mut self.window).await;
 
                     println!("exiting listener for terminal");

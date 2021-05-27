@@ -124,7 +124,7 @@ impl Handler {
         match tty {
             Some(sender) => {
                 // send exit signal; then create new
-                sender.send(terminal::Command::Exit).await.unwrap();
+                sender.send(terminal::Command::Remove).await.unwrap();
 
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
@@ -146,7 +146,7 @@ impl Handler {
     ) -> Result<(), Error> {
         let tty = self.ttys.lock().await.get(&term).cloned();
         tty.ok_or_else(|| Error::NoTerminal(term.clone()))?
-            .send(terminal::Command::Exit)
+            .send(terminal::Command::Remove)
             .await
             .ok();
 
